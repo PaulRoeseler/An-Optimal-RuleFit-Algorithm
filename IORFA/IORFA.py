@@ -4,24 +4,32 @@
 
 from collections import namedtuple
 import numpy as np
-from scipy import stats
 import gurobipy as gp
 from gurobipy import GRB
 from sklearn import tree
 
 class optimalDecisionTreeClassifier:
     """
-    optimal classification tree
+    Optimal regression tree with an integrated linear term (IORFA).
+    Prediction: f(x) = x @ beta + gamma_leaf.
     """
-    def __init__(self, max_depth=3, min_samples_split=2, alpha=0, warmstart=True, timelimit=600, output=True):
+    def __init__(self, max_depth=3, min_samples_split=2, alpha=0, warmstart=True, timelimit=600, output=True,
+                 gamma_bounds=(-10000, 10000)):
         self.max_depth = max_depth
         self.min_samples_split = min_samples_split
         self.alpha = alpha
         self.warmstart = warmstart
         self.timelimit = timelimit
         self.output = output
+        self.gamma_bounds = gamma_bounds
         self.trained = False
         self.optgap = None
+        self.feature_names_ = None
+        self.feature_mins_ = None
+        self.feature_maxs_ = None
+        self.big_m_ = None
+        self._beta = None
+        self._gamma = None
 
         # node index
         self.n_index = [i+1 for i in range(2 ** (self.max_depth + 1) - 1)]
@@ -32,19 +40,23 @@ class optimalDecisionTreeClassifier:
         """
         fit training data
         """
+        if hasattr(x, "columns"):
+            self.feature_names_ = list(x.columns)
+        x = np.asarray(x, dtype=float)
+        y = np.asarray(y, dtype=float).ravel()
+
         # data size
         self.n, self.p = x.shape
+        self.feature_mins_ = np.min(x, axis=0)
+        self.feature_maxs_ = np.max(x, axis=0)
         if self.output:
             print('Training data include {} instances, {} features.'.format(self.n,self.p))
-
-        # labels
-        self.labels = np.unique(y)
 
         # solve MIP
         self.m, self.a, self.b, self.d, self.l, self.beta, self.gamma = self._buildMIP(x, y)
         
         if self.warmstart:
-            self._setStart(x, y, self.a, self.d, self.l)
+            self._setStart(x, y, self.a, self.b, self.d, self.l)
 
         self.m.optimize()
         self.optgap = self.m.MIPGap
@@ -53,6 +65,8 @@ class optimalDecisionTreeClassifier:
         self._a = {ind:self.a[ind].x for ind in self.a}
         self._b = {ind:self.b[ind].x for ind in self.b}
         self._d = {ind:self.d[ind].x for ind in self.d}
+        self._beta = np.array([self.beta[p].x for p in range(self.p)])
+        self._gamma = {t:self.gamma[t].x for t in self.l_index}
 
         self.trained = True
 
@@ -62,27 +76,27 @@ class optimalDecisionTreeClassifier:
         """
         if not self.trained:
             raise AssertionError('This optimalDecisionTreeClassifier instance is not fitted yet.')
+        x = np.asarray(x, dtype=float)
+        if x.ndim == 1:
+            x = x.reshape(1, -1)
+        if x.shape[1] != self.p:
+            raise ValueError(f'Expected {self.p} features, got {x.shape[1]}.')
 
-        # leaf label
-        labelmap = {}
-        for t in self.l_index:
-            for k in self.labels:
-                if self._c[k,t] >= 1e-2:
-                    labelmap[t] = k
-
-        y_pred = []
-        for xi in x/self.scales:
+        y_pred = np.zeros(x.shape[0], dtype=float)
+        for i, xi in enumerate(x):
             t = 1
             while t not in self.l_index:
-                right = (sum([self._a[j,t] * xi[j] for j in range(self.p)]) + 1e-9 >= self._b[t])
-                if right:
+                if self._d.get(t, 0.0) < 0.5:
+                    t = 2 * t + 1
+                    continue
+                split_val = sum(self._a[j, t] * xi[j] for j in range(self.p))
+                if split_val + 1e-9 >= self._b[t]:
                     t = 2 * t + 1
                 else:
                     t = 2 * t
-            # label
-            y_pred.append(labelmap[t])
+            y_pred[i] = float(np.dot(xi, self._beta) + self._gamma[t])
 
-        return np.array(y_pred)
+        return y_pred
 
     def _buildMIP(self, x, y):
         """
@@ -105,28 +119,31 @@ class optimalDecisionTreeClassifier:
         # variables
         a = m.addVars(self.p, self.b_index, vtype=GRB.BINARY, name='a') # splitting feature
         b = m.addVars(self.b_index, vtype=GRB.CONTINUOUS, name='b') # splitting threshold
-        # c = m.addVars(self.labels, self.l_index, vtype=GRB.BINARY, name='c') # node prediction
         d = m.addVars(self.b_index, vtype=GRB.BINARY, name='d') # splitting option
         z = m.addVars(self.n, self.l_index, vtype=GRB.BINARY, name='z') # leaf node assignment
         l = m.addVars(self.l_index, vtype=GRB.BINARY, name='l') # leaf node activation
-        beta = m.addVars(self.p, vtype=GRB.CONTINUOUS, name='beta') 
-        varkappa = m.addVars(self.n, self.l_index, vtype=GRB.CONTINUOUS, name='varkappa') 
-        gamma = m.addVars(self.l_index, vtype=GRB.CONTINUOUS, name='gamma') 
-        lamb = m.addVars(self.n, vtype=GRB.CONTINUOUS, name='lambda') 
-        M = m.addVars(self.labels, self.l_index, vtype=GRB.CONTINUOUS, name='M') # leaf node samples with label
+        beta = m.addVars(self.p, vtype=GRB.CONTINUOUS, name='beta')
+        varkappa = m.addVars(self.n, self.l_index, vtype=GRB.CONTINUOUS, name='varkappa')
+        gamma = m.addVars(self.l_index, vtype=GRB.CONTINUOUS, name='gamma')
+        lamb = m.addVars(self.n, vtype=GRB.CONTINUOUS, name='f')
         N = m.addVars(self.l_index, vtype=GRB.CONTINUOUS, name='N') # leaf node samples
-        aux = m.addVars(self.n, vtype = GRB.CONTINUOUS, name = 'aux')
-
-        # calculate baseline accuracy
-        baseline = self._calBaseline(y)
 
         # calculate minimum distance
         min_dis = self._calMinDist(x)
 
+        feature_min = self.feature_mins_ if self.feature_mins_ is not None else np.min(x, axis=0)
+        feature_max = self.feature_maxs_ if self.feature_maxs_ is not None else np.max(x, axis=0)
+        feature_range = feature_max - feature_min
+        max_range = float(np.max(feature_range)) if feature_range.size else 0.0
+        eps_max = float(np.max(min_dis)) if len(min_dis) > 0 else 0.0
+        big_m = max_range + eps_max
+        if big_m <= 0:
+            big_m = 1.0
+        self.big_m_ = big_m
+
         objExp = gp.QuadExpr()
 
-        self.Upper = 10000
-        self.Lower = -10000
+        self.Lower, self.Upper = self.gamma_bounds
 
         # add single terms using add
         for i in range(self.n):
@@ -136,7 +153,7 @@ class optimalDecisionTreeClassifier:
             
             m.addConstr(lamb[i] == gp.quicksum(varkappa[i, t] for t in self.l_index))
             
-            for t in range(self.l):
+            for t in self.l_index:
                 m.addConstr(self.Lower*z[i, t] <= varkappa[i, t])
                 m.addConstr(varkappa[i, t] <= self.Upper*z[i, t])
                 m.addConstr(self.Lower*(1-z[i, t]) <= gamma[t]-varkappa[i, t])
@@ -144,18 +161,11 @@ class optimalDecisionTreeClassifier:
                 
             # gp.quicksum(gamma[t]*z[i, t] for t in self.l_index))
 
-        m.setObjective(objExp)
-
-        # m.addConstrs(aux[i] >= (y[i] - gp.quicksum(gamma[t]*z[i, t] for t in self.l_index)) for i in range(self.n))
-        # m.addConstrs(aux[i] >= -1*(y[i] - gp.quicksum(gamma[t]*z[i, t] for t in self.l_index)) for i in range(self.n))
-
-        # m.addConstrs(aux[i] >= (y[i] - gp.quicksum(x[i, p] * beta[p] for p in range(self.p)) - gp.quicksum(gamma[t]*z[i, t] for t in self.l_index)) for i in range(self.n))
-        # m.addConstrs(aux[i] >= -1*(y[i] - gp.quicksum(x[i, p] * beta[p] for p in range(self.p)) - gp.quicksum(gamma[t]*z[i, t] for t in self.l_index)) for i in range(self.n))
+        complexity = gp.quicksum(d[t] for t in self.b_index)
+        m.setObjective((1.0 / self.n) * objExp + self.alpha * complexity)
 
         # (16)
         m.addConstrs(z.sum('*', t) == N[t] for t in self.l_index)
-        # (18)
-        # m.addConstrs(c.sum('*', t) == l[t] for t in self.l_index)
         # (13) and (14)
         for t in self.l_index:
             left = (t % 2 == 0)
@@ -164,14 +174,14 @@ class optimalDecisionTreeClassifier:
                 if left:
                     m.addConstrs(gp.quicksum(a[j,ta] * (x[i,j] + min_dis[j]) for j in range(self.p))
                                  +
-                                 (1 + np.max(min_dis)) * (1 - d[ta])
+                                 big_m * (1 - d[ta])
                                  <=
-                                 b[ta] + (1 + np.max(min_dis)) * (1 - z[i,t])
+                                 b[ta] + big_m * (1 - z[i,t])
                                  for i in range(self.n))
                 else:
                     m.addConstrs(gp.quicksum(a[j,ta] * x[i,j] for j in range(self.p))
                                  >=
-                                 b[ta] - (1 - z[i,t])
+                                 b[ta] - big_m * (1 - z[i,t])
                                  for i in range(self.n))
                 left = (ta % 2 == 0)
                 ta //= 2
@@ -185,19 +195,12 @@ class optimalDecisionTreeClassifier:
         # (2)
         m.addConstrs(a.sum('*', t) == d[t] for t in self.b_index)
         # (3)
-        m.addConstrs(b[t] <= d[t] for t in self.b_index)
+        m.addConstrs(b[t] <= gp.quicksum(feature_max[j] * a[j, t] for j in range(self.p)) for t in self.b_index)
+        m.addConstrs(b[t] >= gp.quicksum(feature_min[j] * a[j, t] for j in range(self.p)) for t in self.b_index)
         # (5)
         m.addConstrs(d[t] <= d[t//2] for t in self.b_index if t != 1)
 
         return m, a, b, d, l, beta, gamma
-
-    @staticmethod
-    def _calBaseline(y):
-        """
-        obtain baseline accuracy by simply predicting the most popular class
-        """
-        mode = stats.mode(y, keepdims = True)[0][0]
-        return np.sum(y == mode)
 
     @staticmethod
     def _calMinDist(x):
@@ -219,7 +222,7 @@ class optimalDecisionTreeClassifier:
             min_dis.append(np.min(dis) if np.min(dis) else 1)
         return min_dis
 
-    def _setStart(self, x, y, a, d, l):
+    def _setStart(self, x, y, a, b, d, l):
         """
         set warm start from CART
         """
@@ -239,11 +242,13 @@ class optimalDecisionTreeClassifier:
             # not split
             if rules[t].feat is None or rules[t].feat == tree._tree.TREE_UNDEFINED:
                 d[t].start = 0
+                b[t].start = 0
                 for f in range(self.p):
                     a[f,t].start = 0
             # split
             else:
                 d[t].start = 1
+                b[t].start = rules[t].threshold
                 for f in range(self.p):
                     if f == int(rules[t].feat):
                         a[f,t].start = 1
@@ -288,6 +293,8 @@ class optimalDecisionTreeClassifier:
             # terminal
             node_map[2*t] = -1
             node_map[2*t+1] = -1
+            if node_map[t] == -1:
+                continue
             # left
             l = clf.tree_.children_left[node_map[t]]
             node_map[2*t] = l

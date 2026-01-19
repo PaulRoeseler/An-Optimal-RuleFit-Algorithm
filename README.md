@@ -1,4 +1,4 @@
-# ORFA / IORFA — An Optimal RuleFit Algorithm (and an Integrated MIO Variant)
+# ORFA / IORFA — An Optimal RuleFit Algorithm
 
 <p align="center">
   <a href="https://github.com/PaulRoeseler/An-Optimal-RuleFit-Algorithm/blob/main/An_Optimal_RuleFit_Algorithm.pdf">
@@ -14,21 +14,21 @@ This repository contains the implementation of **ORFA** (“Optimal RuleFit Algo
 - **ORFA**: an *optimal-tree* variant of Friedman & Popescu’s **RuleFit** that replaces greedy CART-style rule generation with **Optimal Regression Trees (ORT)** as rule generators.
 - **IORFA**: a **single-step mixed-integer optimization (MIO)** formulation that *jointly* learns the tree structure and the downstream linear model.
 
-
 ---
 
-## Why this project exists (high-level)
+## Why this project exists
 
 **RuleFit** is attractive because it blends:
 - a linear model (good for **main/linear effects**),
 - with decision-tree rules (good for **interactions / non-linearities**).
 
-However, classic RuleFit typically uses **greedy CART-style trees** to generate rules. To capture complex structure, these trees can become **deep**, which leads to:
+However, classic RuleFit typically uses **greedy CART-style trees** to generate rules. To capture complex structure, this can lead to:
 
-- **long rules** (many conditions per rule), and  
-- **very sparse rule indicators** (few samples satisfy a deep path),
+- **long rules**,  
+- **very sparse rule indicators** (few samples satisfy a deep path),  
+- **many trees ⇒ many candidate rules**.  
 
-both of which make the resulting rule ensemble **harder to interpret and reason about**.
+All of these make the resulting rule ensemble **harder to interpret and reason about**.
 
 **ORFA** addresses this by using **Optimal Regression Trees (ORT)** as the rule generator. ORTs aim to achieve strong predictive performance with **shallower trees**, yielding **shorter, denser, more interpretable rules**.
 
@@ -51,10 +51,6 @@ A typical rule has the form (conceptually):
 Fit a linear model on:
 - the original features x,
 - plus the rule indicator features r_m(x).
-
-Intuition:
-- linear terms capture broad main effects,
-- selected rules capture interactions and localized nonlinear behavior.
 
 ---
 

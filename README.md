@@ -4,9 +4,6 @@
   <a href="https://github.com/PaulRoeseler/An-Optimal-RuleFit-Algorithm/blob/main/An_Optimal_RuleFit_Algorithm.pdf">
     <img alt="Report" src="https://img.shields.io/badge/PDF-Report-2ea44f?logo=adobeacrobatreader&logoColor=white">
   </a>
-  <a href="https://github.com/PaulRoeseler/An-Optimal-RuleFit-Algorithm/blob/main/ORFA_slides.pdf">
-    <img alt="Slides" src="https://img.shields.io/badge/PDF-Slides-blue?logo=googleslides&logoColor=white">
-  </a>
 </p>
 
 This repository contains the implementation of **ORFA** (“Optimal RuleFit Algorithm”) and **IORFA** (“Integrated Optimal RuleFit Algorithm”).

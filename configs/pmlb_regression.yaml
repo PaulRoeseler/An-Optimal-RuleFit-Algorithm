@@ -1,0 +1,29 @@
+problem_type: regression
+dataset_start: 0
+dataset_end: 80
+max_rows: 10000
+max_cols: 100
+iters: 3
+test_size: 0.2
+n_jobs: 4
+outdir: outputs
+checkpoint_dir: null
+baseline_models: ["linear_regression", "svm", "knn"]
+rule_models: []
+factor_multipliers: [0.5, 1, 1.5]
+rules:
+  enabled: false
+  feature_subsample_size: null   # defaults to all features
+  n_num: 1
+  max_iter_hy: 2
+  depth_grid: [1, 2, 3]
+  depth_grid_hy: [1, 2]
+  complexity_bi: 0.001
+  complexity_hy: 0.001
+  generators:
+    Clas_CART: false
+    OCT: false
+    OCT_H: false
+    Reg_CART: false
+    ORT: false
+    ORT_H: false

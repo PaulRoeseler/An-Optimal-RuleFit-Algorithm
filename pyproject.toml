@@ -1,11 +1,29 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "an-optimal-rulefit-algorithm"
 version = "0.1.0"
-description = "Add your description here"
+description = "Benchmark PMLB datasets with baseline models and optional rule-based generators."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "gurobipy>=13.0.0",
-    "numpy>=2.4.1",
+    "pandas>=2.3.3",
+    "pmlb>=1.0.1.post3",
+    "pyyaml>=6.0.3",
     "scikit-learn>=1.8.0",
+    "tqdm>=4.67.1",
 ]
+
+[project.optional-dependencies]
+rules = ["interpretableai"]
+
+[project.scripts]
+rulefit-benchmark = "rulefit_benchmark.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
